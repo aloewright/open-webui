@@ -19,7 +19,7 @@ const packages = [
 
 import { loadPyodide } from 'pyodide';
 import { setGlobalDispatcher, ProxyAgent } from 'undici';
-import { writeFile, readFile, copyFile, readdir, rmdir } from 'fs/promises';
+import { writeFile, readFile, copyFile, readdir, rmdir, mkdir, stat } from 'fs/promises';
 
 /**
  * Loading network proxy configurations from the environment variables.
@@ -52,6 +52,8 @@ function initNetworkProxyFromEnv() {
 }
 
 async function downloadPackages() {
+	// Ensure the pyodide cache directory exists before any operations
+	await mkdir('static/pyodide', { recursive: true });
 	console.log('Setting up pyodide + micropip');
 
 	let pyodide;
@@ -111,10 +113,39 @@ async function downloadPackages() {
 
 async function copyPyodide() {
 	console.log('Copying Pyodide files into static directory');
-	// Copy all files from node_modules/pyodide to static/pyodide
-	for await (const entry of await readdir('node_modules/pyodide')) {
-		await copyFile(`node_modules/pyodide/${entry}`, `static/pyodide/${entry}`);
+
+	const srcDir = 'node_modules/pyodide';
+	const destDir = 'static/pyodide';
+
+	// Recursively copy the pyodide directory tree
+	async function copyRecursive(src, dest) {
+		let srcStat;
+		try {
+			srcStat = await stat(src);
+		} catch (err) {
+			console.error(`Failed to stat ${src}:`, err);
+			return;
+		}
+
+		if (srcStat.isDirectory()) {
+			// Ensure destination directory exists
+			await mkdir(dest, { recursive: true });
+			for (const entry of await readdir(src)) {
+				await copyRecursive(`${src}/${entry}`, `${dest}/${entry}`);
+			}
+		} else {
+			try {
+				await copyFile(src, dest);
+			} catch (err) {
+				// Ignore EEXIST errors (file already copied)
+				if (err.code !== 'EEXIST') {
+					throw err;
+				}
+			}
+		}
 	}
+
+	await copyRecursive(srcDir, destDir);
 }
 
 initNetworkProxyFromEnv();
